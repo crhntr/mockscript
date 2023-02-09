@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall/js"
@@ -27,24 +28,29 @@ func main() {
 	rtnBtn.AddEventListener("click", fn, options, false)
 	defer rtnBtn.RemoveEventListener("click", fn, options, false)
 
+	argsDiv := window.Document().QuerySelector(`#execution #arguments`)
+
 	exec := window.NewEventSource("/exec", true)
-	exec.On("ExecutionResult", func(event dom.MessageEvent) {
-		var message mockscript.ExecutionResult
-		d := event.Data()
-		_ = json.Unmarshal([]byte(d), &message)
-		argsDiv := window.Document().QuerySelector(`#execution #arguments`)
-		exec.Close()
+
+	on(exec, func(event mockscript.ExecutionResult) {
+		defer exec.Close()
 		argsDiv.Closest(`#execution`).
 			AppendChild(window.Document().
-				CreateTextNode(fmt.Sprintf("exit %d", message.ExitCode)))
+				CreateTextNode(fmt.Sprintf("exit %d", event.ExitCode)))
 	})
-
-	exec.On("InvokedExecution", func(event dom.MessageEvent) {
-		var message mockscript.InvokedExecution
-		argsDiv := window.Document().QuerySelector(`#execution #arguments`)
-		argsDiv.SetTextContent(strings.Join(message.Args, " "))
+	on(exec, func(event mockscript.InvokedExecution) {
+		argsDiv.SetTextContent(strings.Join(event.Args, " "))
 	})
 	<-c
+}
+
+func on[T any](src dom.EventSource, handler func(event T)) {
+	var zero T
+	src.On(reflect.TypeOf(zero).Name(), func(event dom.MessageEvent) {
+		var value T
+		_ = json.Unmarshal([]byte(event.Data()), &value)
+		handler(value)
+	})
 }
 
 func returnButton(_ js.Value, args []js.Value) any {

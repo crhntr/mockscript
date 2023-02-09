@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 
 	"github.com/crhntr/sse"
 	"github.com/julienschmidt/httprouter"
@@ -116,17 +117,26 @@ func main() {
 }
 
 type EventSource struct {
+	mut sync.Mutex
 	id  int
 	buf *bytes.Buffer
 	res sse.WriteFlusher
 }
 
-func NewEventSource(res http.ResponseWriter) EventSource {
-	return EventSource{
+func NewEventSource(res http.ResponseWriter) *EventSource {
+	return &EventSource{
 		id:  1,
 		buf: bytes.NewBuffer(make([]byte, 0, 1024)),
 		res: res.(sse.WriteFlusher),
 	}
+}
+
+func (src *EventSource) Send(event sse.EventName, message string) error {
+	src.mut.Lock()
+	defer src.mut.Unlock()
+	_, err := sse.Send(src.res, src.buf, src.id, event, message)
+	src.id++
+	return err
 }
 
 func (src *EventSource) SendJSON(event sse.EventName, data any) error {
@@ -137,7 +147,11 @@ func (src *EventSource) SendJSON(event sse.EventName, data any) error {
 	if err != nil {
 		return err
 	}
+	src.mut.Lock()
+	defer src.mut.Unlock()
 	_, err = sse.Send(src.res, src.buf, src.id, event, string(buf))
 	src.id++
 	return err
 }
+
+func (src *EventSource) EventCount() int { return src.id }
