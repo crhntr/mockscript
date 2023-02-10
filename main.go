@@ -15,6 +15,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) <= 1 {
+		_, _ = os.Stderr.WriteString("no script argument provided")
+		return
+	}
 	fileName := os.Args[1]
 
 	fileContent, err := os.ReadFile(fileName)
