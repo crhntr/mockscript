@@ -128,6 +128,7 @@ func getMockScript(args []string, message string) (string, error) {
 		return "", err
 	}
 	_, _ = tmp.WriteString("#!/usr/bin/env bash\n")
+	_, _ = tmp.WriteString("set -euo pipefail\n")
 	for _, line := range strings.Split(message, "\n") {
 		if line == "" {
 			continue
