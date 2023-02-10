@@ -3,21 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"fmt"
 	"io"
-	"log"
-	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"reflect"
-	"sync"
+	"strings"
+	"time"
 
-	"github.com/crhntr/sse"
-	"github.com/julienschmidt/httprouter"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
-
-	"github.com/crhntr/mockscript/mockscript"
 )
 
 func main() {
@@ -35,24 +30,20 @@ func main() {
 	}
 
 	var (
-		calls       = make(chan []string)
-		returns     = make(chan int)
-		scriptError = make(chan error)
+		execArgs     = make(chan []string)
+		execHandlers = make(chan interp.ExecHandlerFunc)
+		scriptError  = make(chan error)
 	)
 
 	go func() {
-		defer close(calls)
+		defer close(execArgs)
 		defer close(scriptError)
 		runner, err := interp.New(
 			interp.StdIO(nil, io.Discard, io.Discard),
 			interp.ExecHandler(func(ctx context.Context, args []string) error {
-				calls <- args
-				ret := <-returns
-				log.Println(args, " => ", ret)
-				if ret != 0 {
-					return interp.NewExitStatus(uint8(ret))
-				}
-				return nil
+				execArgs <- args
+				fn := <-execHandlers
+				return fn(ctx, args)
 			}),
 		)
 		if err != nil {
@@ -65,93 +56,134 @@ func main() {
 		}
 	}()
 
-	mux := httprouter.New()
-	mux.Handler(http.MethodPost, "/return", http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-		requestBuffer, err := io.ReadAll(io.LimitReader(req.Body, 1024))
-		if err != nil {
-			http.Error(res, "failed to read body", http.StatusBadRequest)
-			return
-		}
-		var data mockscript.ExecutionResult
-		if err := json.Unmarshal(requestBuffer, &data); err != nil {
-			http.Error(res, "failed to parse body", http.StatusBadRequest)
-			return
-		}
-		returns <- data.ExitCode
-		res.WriteHeader(http.StatusAccepted)
-	}))
-	mux.Handler(http.MethodGet, "/exec", http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-		eventSource := NewEventSource(res)
-		sse.SetHeaders(res)
-		res.WriteHeader(http.StatusOK)
-
-		for i := 2; i > 0; {
-			select {
-			case args, isOpen := <-calls:
-				if !isOpen {
-					i--
-				}
-				_ = eventSource.SendJSON("", mockscript.InvokedExecution{
-					Args: args,
-				})
-			case se, isOpen := <-scriptError:
-				if !isOpen {
-					i--
-				}
-				var code uint8
-				if se != nil {
-					code, _ = interp.IsExitStatus(se)
-				}
-				_ = eventSource.SendJSON("", mockscript.ExecutionResult{
-					ExitCode: int(code),
-				})
+	fallThoughHandler := interp.DefaultExecHandler(time.Second)
+	var (
+		argsDone, scriptErrDone bool
+	)
+	for !argsDone || !scriptErrDone {
+		select {
+		case args, ok := <-execArgs:
+			if !ok {
+				argsDone = true
+				execArgs = nil
+				continue
 			}
+			logInterception(args)
+			switch getInterceptionOption() {
+			case CallOptionMock:
+				go getAndSendExecFunc(args, fallThoughHandler, execHandlers)
+			case CallOptionFallThrough:
+				execHandlers <- fallThoughHandler
+			}
+		case scriptErr, ok := <-scriptError:
+			if !ok {
+				scriptErrDone = true
+				scriptError = nil
+				continue
+			}
+			fmt.Println(fmt.Errorf("script failed with error: %w", scriptErr))
 		}
-	}))
-	mux.Handler(http.MethodGet, "/webapp/*filepath", http.StripPrefix("/webapp", http.FileServer(http.Dir("webapp"))))
-	mux.Handler(http.MethodGet, "/", http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-		http.ServeFile(res, req, filepath.Join("webapp", "exec.html"))
-	}))
-
-	log.Fatal(http.ListenAndServe(":8080", mux))
-}
-
-type EventSource struct {
-	mut sync.Mutex
-	id  int
-	buf *bytes.Buffer
-	res sse.WriteFlusher
-}
-
-func NewEventSource(res http.ResponseWriter) *EventSource {
-	return &EventSource{
-		id:  1,
-		buf: bytes.NewBuffer(make([]byte, 0, 1024)),
-		res: res.(sse.WriteFlusher),
 	}
 }
 
-func (src *EventSource) Send(event sse.EventName, message string) error {
-	src.mut.Lock()
-	defer src.mut.Unlock()
-	_, err := sse.Send(src.res, src.buf, src.id, event, message)
-	src.id++
-	return err
+func logInterception(args []string) {
+	fmt.Println("intercepted exec: ", args)
 }
 
-func (src *EventSource) SendJSON(event sse.EventName, data any) error {
-	if event == "" {
-		event = sse.EventName(reflect.TypeOf(data).Name())
+const (
+	CallOptionMock        = 1
+	CallOptionFallThrough = 2
+)
+
+func getInterceptionOption() int {
+	options := []string{
+		"fallthough",
+		"create mock",
 	}
-	buf, err := json.Marshal(data)
+
+	var selectedOption int
+	for {
+		fmt.Println("what would you like to do?")
+		for i, o := range options {
+			fmt.Printf("\t%d: %s\n", i+1, o)
+		}
+		fmt.Printf(": ")
+		n, err := fmt.Scanf("%d\n", &selectedOption)
+		if err != nil || n < 1 || n-1 >= len(options) {
+			_, _ = fmt.Fprintf(os.Stderr, "unknown option: %s", err)
+			continue
+		}
+		break
+	}
+	return selectedOption - 1
+}
+
+func getMockScript(args []string, message string) (string, error) {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vim"
+	}
+	tmp, err := os.CreateTemp("", "")
 	if err != nil {
-		return err
+		return "", err
 	}
-	src.mut.Lock()
-	defer src.mut.Unlock()
-	_, err = sse.Send(src.res, src.buf, src.id, event, string(buf))
-	src.id++
-	return err
+	_, _ = tmp.WriteString("#!/usr/bin/env bash\n")
+	for _, line := range strings.Split(message, "\n") {
+		if line == "" {
+			continue
+		}
+		_, _ = tmp.WriteString("### ERROR: " + line + "\n")
+	}
+	_, _ = tmp.WriteString("### args: ")
+	_, _ = tmp.WriteString(strings.Join(args, " "))
+	_, _ = tmp.WriteString("\n\n")
+
+	_ = tmp.Close()
+	cmd := exec.Command(editor, tmp.Name())
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	contents, err := os.ReadFile(tmp.Name())
+	if err != nil {
+		return "", err
+	}
+	fmt.Println()
+	return string(contents), nil
 }
 
-func (src *EventSource) EventCount() int { return src.id }
+func getAndSendExecFunc(args []string, fallThoughHandler interp.ExecHandlerFunc, c chan<- interp.ExecHandlerFunc) {
+	var scriptMessage string
+	for {
+		mockScriptCode, err := getMockScript(args, scriptMessage)
+		if err != nil {
+			scriptMessage = err.Error()
+			_, _ = fmt.Fprintf(os.Stderr, "failed to get mock script: %s", err)
+			continue
+		}
+		r := strings.NewReader(mockScriptCode)
+		mockScript, err := syntax.NewParser().Parse(r, "mock.sh")
+		if err != nil {
+			scriptMessage = err.Error()
+			_, _ = fmt.Fprintf(os.Stderr, "failed to parse mock script: %s", err)
+			continue
+		}
+		c <- func(ctx context.Context, args []string) error {
+			hd := interp.HandlerCtx(ctx)
+			runner, err := interp.New(
+				interp.StdIO(hd.Stdin, hd.Stdout, hd.Stderr),
+				interp.ExecHandler(fallThoughHandler),
+				interp.Dir(hd.Dir),
+				interp.Env(hd.Env),
+				interp.Params(append([]string{"--"}, args[1:]...)...),
+			)
+			if err != nil {
+				panic("failed to start mock shell")
+			}
+			return runner.Run(context.Background(), mockScript)
+		}
+		break
+	}
+}
