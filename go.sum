@@ -1,14 +1,6 @@
 github.com/creack/pty v1.1.18 h1:n56/Zwd5o6whRC5PMGretI4IdRLlmBXYNjScPaBgsbY=
-github.com/crhntr/sse v0.0.0-20230203073500-483ddc669c99 h1:9HOkt8D9fMzMStTjsMP86CD8z++Y45uFfTiPWNcRVPQ=
-github.com/crhntr/sse v0.0.0-20230203073500-483ddc669c99/go.mod h1:NHkaAcDlZO8zQ1gFe0ovmDus7rwkDa9kmDWECpWXgEU=
-github.com/crhntr/window v0.0.0-20230203010820-1ca44a6fe4c8 h1:sKSYPiraYw00KQagHAf/zIeSkb3tcbx2lwum7ijOJmo=
-github.com/crhntr/window v0.0.0-20230203010820-1ca44a6fe4c8/go.mod h1:45AqfrI3esAT56PbkiC6ZIRhzDQ0YzLCCJHNnG6K3nw=
-github.com/crhntr/window v0.0.0-20230203095859-94e72c15ad89 h1:OrS49SogUkEyxppdEf11RCczdX9BJBYVH9Wtd/SIJKM=
-github.com/crhntr/window v0.0.0-20230203095859-94e72c15ad89/go.mod h1:45AqfrI3esAT56PbkiC6ZIRhzDQ0YzLCCJHNnG6K3nw=
 github.com/frankban/quicktest v1.14.4 h1:g2rn0vABPOOXmZUj+vbmUp0lPoXEMuhTpIluN0XL9UY=
 github.com/google/go-cmp v0.5.9 h1:O2Tfq5qg4qc4AmwVlvv0oLiVAGB7enBSJ2x2DqQFi38=
-github.com/julienschmidt/httprouter v1.3.0 h1:U0609e9tgbseu3rBINet9P48AI/D3oJs4dN7jwJOQ1U=
-github.com/julienschmidt/httprouter v1.3.0/go.mod h1:JR6WtHb+2LUe8TCKY3cZOxFyyO8IZAc4RVcycCCAKdM=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/rogpeppe/go-internal v1.9.0 h1:73kH8U+JUqXU8lRuOHeVHaa/SZPifC7BkcraZVejAe8=
